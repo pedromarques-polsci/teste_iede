@@ -174,7 +174,7 @@ sobral_vs_br <- df_ideb_muni %>%
 # PLOTS
 
 # TRAJETORIAS DO IDEB DE SOBRAL
-df_ideb_muni %>% 
+gg_ideb_ts <- df_ideb_muni %>% 
   ungroup() %>% 
   mutate(avaliacao = factor(avaliacao, levels = c("iniciais", "finais"))) %>% 
   filter(co_municipio == 2312908, rede == "Pública") %>% 
@@ -186,10 +186,17 @@ df_ideb_muni %>%
     labels = c("iniciais" = "Anos Iniciais", "finais" = "Anos Finais")
   ) +
   labs(color = "Série", x = "Ano",
-       y = "IDEB") +
-  theme_minimal()
+       y = "IDEB",
+       title = "Trajetória do IDEB (Escolas Públicas)") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5))
 
-df_ideb_muni %>% 
+gg_ideb_ts
+
+ggsave('plot/gg_ideb_ts.jpeg', plot = gg_ideb_ts, dpi = 500, 
+       height = 3, width = 6, units = 'in')
+
+gg_mat_ts <- df_ideb_muni %>% 
   ungroup() %>% 
   mutate(avaliacao = factor(avaliacao, levels = c("iniciais", "finais"))) %>% 
   filter(co_municipio == 2312908, rede == "Pública") %>% 
@@ -201,10 +208,17 @@ df_ideb_muni %>%
     labels = c("iniciais" = "Anos Iniciais", "finais" = "Anos Finais")
   ) +
   labs(color = "Série", x = "Ano",
-       y = "Proficiência em Matemática") +
-  theme_minimal()
+       y = "Proficiência em Matemática",
+       title = "Trajetória da Proficiência em Matemática (Escolas Públicas)") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5))
 
-df_ideb_muni %>% 
+gg_mat_ts
+
+ggsave('plot/gg_mat_ts.jpeg', plot = gg_mat_ts, dpi = 500, 
+       height = 3, width = 6, units = 'in')
+
+gg_pt_ts <- df_ideb_muni %>% 
   ungroup() %>% 
   mutate(avaliacao = factor(avaliacao, levels = c("iniciais", "finais"))) %>% 
   filter(co_municipio == 2312908, rede == "Pública") %>% 
@@ -216,11 +230,18 @@ df_ideb_muni %>%
     labels = c("iniciais" = "Anos Iniciais", "finais" = "Anos Finais")
   ) +
   labs(color = "Série", x = "Ano",
-       y = "Proficiência em Português") +
-  theme_minimal()
+       y = "Proficiência em Português",
+       title = "Trajetória da Proficiência em Português (Escolas Públicas)") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5))
+
+gg_pt_ts
+
+ggsave('plot/gg_pt_ts.jpeg', plot = gg_pt_ts, dpi = 500, 
+       height = 3, width = 6, units = 'in')
 
 # COMPARANDO A TRAJETORIA DAS ESCOLAS PUBLICAS DE SOBRAL COM A MEDIA BRASILEIRA
-sobral_vs_br %>% 
+gg_sobral_ideb_media <- sobral_vs_br %>% 
   ggplot(aes(x = ano, y = value, group = tipo, 
              color = tipo, linetype = tipo,
              )) + 
@@ -236,8 +257,16 @@ sobral_vs_br %>%
   scale_linetype_manual(
     values = c("media" = "dashed", "ideb" = "solid"), 
     labels = c("media" = "Média do Brasil", "ideb" = "IDEB de Sobral")) +
+  labs(title = "Sobral versus média brasileira
+  (Escolas Públicas)") +
   theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5)) +
   facet_wrap(~ avaliacao, nrow = 2, labeller = label_value)
+
+gg_sobral_ideb_media
+
+ggsave('plot/gg_sobral_ideb_media.jpeg', plot = gg_sobral_ideb_media, dpi = 500, 
+       height = 5, width = 6, units = 'in')
 
 # COMPARANDO A RECUPERACAO
 ideb_rec <- df_ideb_muni %>% group_by(co_municipio, avaliacao) %>% 
@@ -267,25 +296,46 @@ pt_rec <- df_ideb_muni %>% group_by(co_municipio, avaliacao) %>%
   mutate(media_recuperacao = mean(recuperacao, na.rm = T)) %>% 
   ungroup()
 
-purrr::map(c(pt_rec, mat_rec, ideb_rec),
-           ~summarize(min = min(recuperacao, na.rm = T),
-                      q1 = quantile(recuperacao, 0.25, na.rm = T),
-                      q2 = quantile(recuperacao, 0.50, na.rm = T),
-                      mean = mean(recuperacao, na.rm = T),
-                      q3 = quantile(recuperacao, 0.75, na.rm = T),
-                      max = max(recuperacao, na.rm = T),
-                      sd = sd(recuperacao, na.rm = T))) %>% 
-             mutate_if(is.numeric, format, 1, digits = 5))
-
 pt_rec %>% 
-  summarize(min = min(portugues_recuperacao, na.rm = T),
-            q1 = quantile(portugues_recuperacao, 0.25, na.rm = T),
-            q2 = quantile(portugues_recuperacao, 0.50, na.rm = T),
-            mean = mean(portugues_recuperacao, na.rm = T),
-            q3 = quantile(portugues_recuperacao, 0.75, na.rm = T),
-            max = max(portugues_recuperacao, na.rm = T),
-            sd = sd(portugues_recuperacao, na.rm = T)) %>% 
-  mutate_if(is.numeric, format, 1, digits = 5)
+  group_by(avaliacao) %>% 
+  summarize(min = min(recuperacao, na.rm = T),
+            q1 = quantile(recuperacao, 0.25, na.rm = T),
+            q2 = quantile(recuperacao, 0.50, na.rm = T),
+            mean = mean(recuperacao, na.rm = T),
+            q3 = quantile(recuperacao, 0.75, na.rm = T),
+            max = max(recuperacao, na.rm = T),
+            sd = sd(recuperacao, na.rm = T)) %>% 
+  left_join(pt_rec %>% filter(co_municipio == 2312908) %>% select(avaliacao,
+                                                                  recuperacao),
+            join_by(avaliacao))
+
+mat_rec %>% 
+  group_by(avaliacao) %>% 
+  summarize(min = min(recuperacao, na.rm = T),
+            q1 = quantile(recuperacao, 0.25, na.rm = T),
+            q2 = quantile(recuperacao, 0.50, na.rm = T),
+            mean = mean(recuperacao, na.rm = T),
+            q3 = quantile(recuperacao, 0.75, na.rm = T),
+            max = max(recuperacao, na.rm = T),
+            sd = sd(recuperacao, na.rm = T)) %>% 
+  mutate_if(is.numeric, format, 1, digits = 5) %>% 
+  left_join(mat_rec %>% filter(co_municipio == 2312908) %>% select(avaliacao,
+                                                                  recuperacao),
+            join_by(avaliacao))
+
+ideb_rec %>% 
+  group_by(avaliacao) %>% 
+  summarize(min = min(recuperacao, na.rm = T),
+            q1 = quantile(recuperacao, 0.25, na.rm = T),
+            q2 = quantile(recuperacao, 0.50, na.rm = T),
+            mean = mean(recuperacao, na.rm = T),
+            q3 = quantile(recuperacao, 0.75, na.rm = T),
+            max = max(recuperacao, na.rm = T),
+            sd = sd(recuperacao, na.rm = T)) %>% 
+  mutate_if(is.numeric, format, 1, digits = 5) %>% 
+  left_join(ideb_rec %>% filter(co_municipio == 2312908) %>% select(avaliacao,
+                                                                   recuperacao),
+            join_by(avaliacao))
 
 # ANALISE DESAGREGADA -----------------------------------------------------
 anos_finais_escola <- read_excel(
