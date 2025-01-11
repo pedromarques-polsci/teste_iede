@@ -102,6 +102,7 @@ gasto_var %>% summarise(mean = mean(var_per))
 # 2. ANALISE EDUCACIONAL --------------------------------------------------
 
 # 2.1 ANALISE AGREGADA ------------------------------------------------------
+# EXTRACAO
 anos_finais_muni <- read_excel(
   "raw_data/divulgacao_anos_finais_municipios_2023.xlsx",
   range = "A10:DH14411", na = "-") %>% clean_names()
@@ -110,29 +111,73 @@ anos_iniciais_muni <- read_excel(
   "raw_data/divulgacao_anos_iniciais_municipios_2023.xlsx",
   range = "A10:DR14507", na = "-") %>% clean_names()
 
+# TRANSFORMANDO EM FORMATO TIDY
 long_ideb_finais_muni <- anos_finais_muni %>% 
   select(sg_uf, co_municipio, no_municipio, rede,
-         vl_observado_2005:vl_observado_2023) %>% 
-  pivot_longer(cols = vl_observado_2005:vl_observado_2023,
-               names_to = "ano", values_to = "ideb") %>% 
-  mutate(ano = parse_number(ano),
-         avaliacao = "finais")
+         vl_observado_2005:vl_observado_2023,
+         starts_with(c("vl_nota_matematica", "vl_nota_portugues"))
+  ) %>%  
+  mutate(across(starts_with(c("vl_nota_matematica", "vl_nota_portugues")), 
+                ~ as.numeric(
+                  str_replace(string = .x, pattern = ",", 
+                                         replacement = ".")
+                  )
+                )
+         ) %>% 
+  pivot_longer(cols = starts_with(c("vl_nota_matematica", "vl_nota_portugues",
+                                    "vl_observado")),
+               names_to = "x", values_to = "nota") %>% 
+  mutate(ano = parse_number(x),
+         x = str_extract_all(string = x, 
+                             pattern = "matematica|portugues|observado"),
+         avaliacao = "finais") %>% 
+  pivot_wider(names_from = x, values_from = nota) %>% 
+  rename(ideb = observado)
 
 long_ideb_iniciais_muni <- anos_iniciais_muni %>% 
   select(sg_uf, co_municipio, no_municipio, rede,
-         vl_observado_2005:vl_observado_2023) %>% 
-  pivot_longer(cols = vl_observado_2005:vl_observado_2023,
-               names_to = "ano", values_to = "ideb") %>% 
-  mutate(ano = parse_number(ano),
-         avaliacao = "iniciais")
+         vl_observado_2005:vl_observado_2023,
+         starts_with(c("vl_nota_matematica", "vl_nota_portugues"))
+  ) %>%  
+  mutate(across(starts_with(c("vl_nota_matematica", "vl_nota_portugues")), 
+                ~ as.numeric(
+                  str_replace(string = .x, pattern = ",", 
+                              replacement = ".")
+                )
+  )
+  ) %>% 
+  pivot_longer(cols = starts_with(c("vl_nota_matematica", "vl_nota_portugues",
+                                    "vl_observado")),
+               names_to = "x", values_to = "nota") %>% 
+  mutate(ano = parse_number(x),
+         x = str_extract_all(string = x, 
+                             pattern = "matematica|portugues|observado"),
+         avaliacao = "iniciais") %>% 
+  pivot_wider(names_from = x, values_from = nota) %>% 
+  rename(ideb = observado)
 
+# JUNTANDO BASES
 df_ideb_muni <- rbind(long_ideb_finais_muni, long_ideb_iniciais_muni)
 
-df_ideb_muni %>% 
+# SOBRAL VS MEDIA BRASILEIRA PARA ESCOLAS PUBLICAS
+sobral_vs_br <- df_ideb_muni %>% 
+  group_by(ano, rede, avaliacao) %>% 
+  mutate(media = mean(ideb, na.rm = TRUE)) %>% 
+  ungroup() %>% 
+  pivot_longer(cols = c(ideb, media), names_to = "tipo", 
+               values_to = "value") %>% 
+  mutate(across(avaliacao, ~factor(., levels=c("iniciais", "finais"),
+                                   labels = c("Anos iniciais", 
+                                              "Anos finais")))) %>% 
+  filter(co_municipio == 2312908, rede == "Pública")
 
+# PLOTS
+
+# TRAJETORIAS DO IDEB DE SOBRAL
 df_ideb_muni %>% 
   ungroup() %>% 
-  filter(co_municipio == 2312908) %>% 
+  mutate(avaliacao = factor(avaliacao, levels = c("iniciais", "finais"))) %>% 
+  filter(co_municipio == 2312908, rede == "Pública") %>% 
   ggplot(aes(x = ano, y = ideb, group = avaliacao, color = avaliacao)) +
   geom_line(linewidth = 1.0) +
   geom_point(size = 2.0) +
@@ -142,26 +187,105 @@ df_ideb_muni %>%
   ) +
   labs(color = "Série", x = "Ano",
        y = "IDEB") +
-  theme_minimal() +
-  facet_wrap(~ rede, nrow = 2)
+  theme_minimal()
 
 df_ideb_muni %>% 
-  group_by(ano, rede, avaliacao) %>% 
-  mutate(media = mean(ideb, na.rm = T)) %>% 
   ungroup() %>% 
-  pivot_longer(cols = c(ideb, media), names_to = "tipo", values_to = "value") %>% 
+  mutate(avaliacao = factor(avaliacao, levels = c("iniciais", "finais"))) %>% 
   filter(co_municipio == 2312908, rede == "Pública") %>% 
-  ggplot(aes(x = ano, y = value, group = tipo, color = tipo)) +
+  ggplot(aes(x = ano, y = matematica, group = avaliacao, color = avaliacao)) +
+  geom_line(linewidth = 1.0) +
+  geom_point(size = 2.0) +
+  scale_color_manual(
+    values = c("iniciais" = "lightblue", "finais" = "darkblue"),
+    labels = c("iniciais" = "Anos Iniciais", "finais" = "Anos Finais")
+  ) +
+  labs(color = "Série", x = "Ano",
+       y = "Proficiência em Matemática") +
+  theme_minimal()
+
+df_ideb_muni %>% 
+  ungroup() %>% 
+  mutate(avaliacao = factor(avaliacao, levels = c("iniciais", "finais"))) %>% 
+  filter(co_municipio == 2312908, rede == "Pública") %>% 
+  ggplot(aes(x = ano, y = portugues, group = avaliacao, color = avaliacao)) +
+  geom_line(linewidth = 1.0) +
+  geom_point(size = 2.0) +
+  scale_color_manual(
+    values = c("iniciais" = "lightblue", "finais" = "darkblue"),
+    labels = c("iniciais" = "Anos Iniciais", "finais" = "Anos Finais")
+  ) +
+  labs(color = "Série", x = "Ano",
+       y = "Proficiência em Português") +
+  theme_minimal()
+
+# COMPARANDO A TRAJETORIA DAS ESCOLAS PUBLICAS DE SOBRAL COM A MEDIA BRASILEIRA
+sobral_vs_br %>% 
+  ggplot(aes(x = ano, y = value, group = tipo, 
+             color = tipo, linetype = tipo,
+             )) + 
   geom_line(linewidth = 1.0) +
   geom_point(size = 2.0) +
   labs(x = "Ano",
        y = "IDEB",
-       color = "") +
+       color = "Legenda", 
+       linetype = "Legenda") +
   scale_color_manual(
-    values = c("media" = "lightblue", "ideb" = "darkblue"),
-    labels = c("media" = "Média do Brasil", "ideb" = "IDEB do Município")) +
+    values = c("media" = "gray70", "ideb" = "gray1"), 
+    labels = c("media" = "Média do Brasil", "ideb" = "IDEB de Sobral")) +
+  scale_linetype_manual(
+    values = c("media" = "dashed", "ideb" = "solid"), 
+    labels = c("media" = "Média do Brasil", "ideb" = "IDEB de Sobral")) +
   theme_minimal() +
-  facet_wrap(~ avaliacao, nrow = 2)
+  facet_wrap(~ avaliacao, nrow = 2, labeller = label_value)
+
+# COMPARANDO A RECUPERACAO
+ideb_rec <- df_ideb_muni %>% group_by(co_municipio, avaliacao) %>% 
+  filter(rede == "Pública") %>% 
+  reframe(recuperacao = (
+    ideb[which(ano == 2023)] - ideb[which(ano == 2019)]) / 
+      ideb[which(ano == 2019)] * 100
+    ) %>% group_by(avaliacao) %>% 
+  mutate(media_recuperacao = mean(recuperacao, na.rm = T)) %>% 
+  ungroup()
+
+mat_rec <- df_ideb_muni %>% group_by(co_municipio, avaliacao) %>% 
+  filter(rede == "Pública") %>% 
+  reframe(recuperacao = (
+    matematica[which(ano == 2023)] - matematica[which(ano == 2019)]) / 
+      matematica[which(ano == 2019)] * 100
+  ) %>% group_by(avaliacao) %>% 
+  mutate(media_recuperacao = mean(recuperacao, na.rm = T)) %>% 
+  ungroup()
+
+pt_rec <- df_ideb_muni %>% group_by(co_municipio, avaliacao) %>% 
+  filter(rede == "Pública") %>% 
+  reframe(recuperacao = (
+    portugues[which(ano == 2023)] - portugues[which(ano == 2019)]) / 
+      portugues[which(ano == 2019)] * 100
+  ) %>% group_by(avaliacao) %>% 
+  mutate(media_recuperacao = mean(recuperacao, na.rm = T)) %>% 
+  ungroup()
+
+purrr::map(c(pt_rec, mat_rec, ideb_rec),
+           ~summarize(min = min(recuperacao, na.rm = T),
+                      q1 = quantile(recuperacao, 0.25, na.rm = T),
+                      q2 = quantile(recuperacao, 0.50, na.rm = T),
+                      mean = mean(recuperacao, na.rm = T),
+                      q3 = quantile(recuperacao, 0.75, na.rm = T),
+                      max = max(recuperacao, na.rm = T),
+                      sd = sd(recuperacao, na.rm = T))) %>% 
+             mutate_if(is.numeric, format, 1, digits = 5))
+
+pt_rec %>% 
+  summarize(min = min(portugues_recuperacao, na.rm = T),
+            q1 = quantile(portugues_recuperacao, 0.25, na.rm = T),
+            q2 = quantile(portugues_recuperacao, 0.50, na.rm = T),
+            mean = mean(portugues_recuperacao, na.rm = T),
+            q3 = quantile(portugues_recuperacao, 0.75, na.rm = T),
+            max = max(portugues_recuperacao, na.rm = T),
+            sd = sd(portugues_recuperacao, na.rm = T)) %>% 
+  mutate_if(is.numeric, format, 1, digits = 5)
 
 # ANALISE DESAGREGADA -----------------------------------------------------
 anos_finais_escola <- read_excel(
