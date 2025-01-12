@@ -1,107 +1,13 @@
 # PACOTES -----------------------------------------------------------------
-library(deflateBR)
-library(ipeadatar)
 library(janitor)
 library(lubridate)
 library(purrr)
 library(readxl)
-library(sidrar)
 library(tidyverse)
 library(zoo)
 
-# 1. SELECIONANDO O MUNICIPIO ---------------------------------------------
-ipeadatar::search_series(language = "br") %>%
-  filter(theme == "Regional") %>% View()
-
-# Baixando dados de gasto com educacao (IPEA)
-gasto_educacao <- ipeadata(code = "DFEDUCM", language = "br") %>%
-  filter(uname == "Municípios") %>%
-  select(-uname) %>% 
-  pivot_wider(
-    names_from = code,
-    values_from = value
-  ) %>%
-  janitor::clean_names()
-
-# Baixando dados de populacao
-periodo <- as.character(seq(2002, 2024))
-
-pop <- purrr::map(periodo,
-                  ~get_sidra(6579, geo = "City",
-                             period = .x)) %>%
-  list_rbind() %>%
-  clean_names() %>%
-  rename(estpop = valor, tcode = municipio_codigo) %>%
-  mutate(tcode = as.double(tcode),
-         ano = as.double(ano))
-
-sidra_estpop <- pop %>% mutate(date = ymd(paste0(ano, "-01-01")))
-
-# Salvando dados de projecao populacional do sidra
-write_rds(sidra_estpop, "int_data/sidra_estpop.RDS")
-
-estpop2023 <- read_xls("raw_data/estimativa_2023.xls", 
-                       range = "A2:E5572") %>% 
-  clean_names() %>% 
-  mutate(tcode = paste0(cod_uf, cod_munic),
-         ano = 2023,
-         date = ymd(paste0(ano, "-01-01"))) %>% 
-  rename(estpop = populacao,
-         municipio = nome_do_municipio)
-
-estpop2024 <- read_xls("raw_data/estimativa_2024.xls", 
-                       sheet = 2,
-                       range = "A2:E5572") %>% 
-  clean_names() %>% 
-  mutate(tcode = paste0(cod_uf, cod_munic),
-         ano = 2024,
-         date = ymd(paste0(ano, "-01-01"))) %>% 
-  rename(estpop = populacao_estimada,
-         municipio = nome_do_municipio)
-
-populacao <- rbind(sidra_estpop %>% select(date, tcode, municipio, estpop),
-                   estpop2023 %>% select(date, tcode, municipio, estpop),
-                   estpop2024 %>% select(date, tcode, municipio, estpop)) %>% 
-  complete() %>% 
-  arrange(date, tcode) %>% 
-  filter(estpop != "...") %>% 
-  complete(date = seq.Date(min(date), max(date), by = "year"),
-           tcode) %>% 
-  group_by(tcode) %>%
-  mutate(estpop = na.approx(estpop, na.rm = F)) %>% 
-  ungroup() %>% 
-  mutate(tcode = as.numeric(tcode))
-
-# Calculando a variacao percentual
-gasto_tratado <- gasto_educacao %>% 
-  left_join(populacao %>% select(tcode, date, estpop), 
-            join_by(date, tcode)) %>% 
-  group_by(tcode) %>% 
-  arrange(date) %>% 
-  mutate(dfeducm = ifelse(dfeducm == 0, NA, dfeducm),
-         dfeducm = na.approx(dfeducm, na.rm = F)) %>% 
-  ungroup() 
-
-gasto_var <- gasto_tratado %>% 
-  mutate(dfeducm = deflate(nominal_values = gasto_tratado$dfeducm,
-                           nominal_dates = gasto_tratado$date,
-                           index = "ipca",
-                           real_date = '01/2010'),
-         dfeducm_pcp = dfeducm/estpop) %>%
-  group_by(tcode) %>% 
-  reframe(var_per = (
-    dfeducm_pcp[which(date=="2023-01-01")] - 
-    dfeducm_pcp[which(date=="2005-01-01")]
-  ) / 
-    dfeducm_pcp[which(date=="2005-01-01")] * 100)
-
-gasto_var %>% arrange(desc(var_per))
-
-gasto_var %>% summarise(mean = mean(var_per))
-
-# 2. ANALISE EDUCACIONAL --------------------------------------------------
-
-# 2.1 ANALISE AGREGADA ------------------------------------------------------
+# 1. ANALISE AGREGADA ------------------------------------------------------
+## 1.1 IDEB ----------------------------------------------------------------
 # EXTRACAO
 anos_finais_muni <- read_excel(
   "raw_data/divulgacao_anos_finais_municipios_2023.xlsx",
@@ -117,7 +23,7 @@ long_ideb_finais_muni <- anos_finais_muni %>%
          vl_observado_2005:vl_observado_2023,
          starts_with(c("vl_nota_matematica", "vl_nota_portugues"))
   ) %>%  
-  mutate(across(starts_with(c("vl_nota_matematica", "vl_nota_portugues")), 
+  mutate(across(starts_with("vl_"), 
                 ~ as.numeric(
                   str_replace(string = .x, pattern = ",", 
                                          replacement = ".")
@@ -139,7 +45,7 @@ long_ideb_iniciais_muni <- anos_iniciais_muni %>%
          vl_observado_2005:vl_observado_2023,
          starts_with(c("vl_nota_matematica", "vl_nota_portugues"))
   ) %>%  
-  mutate(across(starts_with(c("vl_nota_matematica", "vl_nota_portugues")), 
+  mutate(across(starts_with(c("vl_")), 
                 ~ as.numeric(
                   str_replace(string = .x, pattern = ",", 
                               replacement = ".")
@@ -167,8 +73,8 @@ sobral_vs_br <- df_ideb_muni %>%
   pivot_longer(cols = c(ideb, media), names_to = "tipo", 
                values_to = "value") %>% 
   mutate(across(avaliacao, ~factor(., levels=c("iniciais", "finais"),
-                                   labels = c("Anos iniciais", 
-                                              "Anos finais")))) %>% 
+                                   labels = c("Turmas iniciais", 
+                                              "Turmas finais")))) %>% 
   filter(co_municipio == 2312908, rede == "Pública")
 
 # PLOTS
@@ -183,7 +89,7 @@ gg_ideb_ts <- df_ideb_muni %>%
   geom_point(size = 2.0) +
   scale_color_manual(
     values = c("iniciais" = "lightblue", "finais" = "darkblue"),
-    labels = c("iniciais" = "Anos Iniciais", "finais" = "Anos Finais")
+    labels = c("iniciais" = "Turmas iniciais", "finais" = "Turmas finais")
   ) +
   labs(color = "Série", x = "Ano",
        y = "IDEB",
@@ -205,7 +111,7 @@ gg_mat_ts <- df_ideb_muni %>%
   geom_point(size = 2.0) +
   scale_color_manual(
     values = c("iniciais" = "lightblue", "finais" = "darkblue"),
-    labels = c("iniciais" = "Anos Iniciais", "finais" = "Anos Finais")
+    labels = c("iniciais" = "Turmas iniciais", "finais" = "Turmas finais")
   ) +
   labs(color = "Série", x = "Ano",
        y = "Proficiência em Matemática",
@@ -227,7 +133,7 @@ gg_pt_ts <- df_ideb_muni %>%
   geom_point(size = 2.0) +
   scale_color_manual(
     values = c("iniciais" = "lightblue", "finais" = "darkblue"),
-    labels = c("iniciais" = "Anos Iniciais", "finais" = "Anos Finais")
+    labels = c("iniciais" = "Turmas iniciais", "finais" = "Turmas finais")
   ) +
   labs(color = "Série", x = "Ano",
        y = "Proficiência em Português",
@@ -337,11 +243,145 @@ ideb_rec %>%
                                                                    recuperacao),
             join_by(avaliacao))
 
-# ANALISE DESAGREGADA -----------------------------------------------------
+## 1.2 DISTORCAO IDADE-SERIE --------------------------------------------------
+tdi_extr <- function(x, y, w, z){
+  as.name <- substr(w, start = 1, stop = 4)
+  
+  df <- read_excel(paste0("raw_data/tdi_", w, "_", x, ".xlsx"),
+                   range = paste0(z, ":", y), na = "--") %>% clean_names()
+  assign(paste0("tdi_", as.name, "_", x), df, envir = .GlobalEnv)
+}
+
+tdi_coord <- tibble(x = c(2019,2020,2021,2022,2023),
+                    y = c("X65657", "X65637", "X65547", "X65557", "X65581"),
+                    w = rep("municipios", 5),
+                    z = rep("A9", 5))
+
+tdi_coord %>% 
+  pmap(~ tdi_extr(..1, ..2, ..3, ..4))
+
+tdi_muni <- rbind(tdi_muni_2019, tdi_muni_2020, tdi_muni_2021, tdi_muni_2022,
+                  tdi_muni_2023)
+
+# PLOTS
+gg_tdi_muni <- tdi_muni %>% filter(co_municipio == 2312908, 
+                    no_dependencia == "Pública", no_categoria == "Total") %>% 
+  ggplot(aes(x = nu_ano_censo)) +
+  geom_line(aes(y = fun_ai_cat_0, color = "lightblue"), linewidth = 1.0) +
+  geom_line(aes(y = fun_af_cat_0, color = "darkblue"), linewidth = 1.0) +
+  geom_point(aes(y = fun_ai_cat_0, color = "lightblue"), size = 2.0) +
+  geom_point(aes(y = fun_af_cat_0, color = "darkblue"), size = 2.0) +
+  scale_color_manual(values = c("lightblue", "darkblue"),
+                     labels = c("Turmas Iniciais", "Turmas Finais")) +
+  labs(x = "Ano",
+       y = "Taxa de Distorção Idade-Série",
+       title = "Distorção Idade-Série em Escolas Públicas", 
+       color = "Turma") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5))
+
+gg_tdi_muni
+
+ggsave('plot/gg_tdi_muni.jpeg', plot = gg_tdi_muni, dpi = 500, 
+       height = 3, width = 6, units = 'in')
+
+# 2. ANALISE DESAGREGADA ------------------------------------------------------
+## 2.1 IDEB ----------------------------------------------------------------
+# TRANSFORMANDO EM FORMATO TIDY
+
+# FINAIS
 anos_finais_escola <- read_excel(
   "raw_data/divulgacao_anos_finais_escolas_2023.xlsx",
-  range = "A10:DJ47229", na = "-") %>% clean_names()
+  range = "A10:DJ47229", na = "-") %>% clean_names() %>% 
+  mutate(across(starts_with("vl_"), ~as.numeric(
+    str_replace(string = .x, pattern = ",", 
+                replacement = ".")
+  )))
 
+long_ideb_finais_escola <- anos_finais_escola %>% 
+  select(sg_uf, co_municipio, no_municipio, no_escola, id_escola, rede,
+         vl_observado_2005:vl_observado_2023,
+         starts_with(c("vl_nota_matematica", "vl_nota_portugues"))) %>% 
+  pivot_longer(cols = starts_with(c("vl_nota_matematica", "vl_nota_portugues",
+                                    "vl_observado")),
+               names_to = "x", values_to = "nota") %>% 
+  mutate(ano = parse_number(x),
+         x = str_extract_all(string = x, 
+                             pattern = "matematica|portugues|observado"),
+         avaliacao = "finais") %>% 
+  pivot_wider(names_from = x, values_from = nota) %>% 
+  rename(ideb = observado)
+
+# INICIAIS
 anos_iniciais_escola <- read_excel(
   "raw_data/divulgacao_anos_iniciais_escolas_2023.xlsx",
-  range = "A10:DT64915", na = "-") %>% clean_names()
+  range = "A10:DT64915", na = "-") %>% clean_names() %>% 
+  mutate(across(starts_with("vl_"), ~as.numeric(
+    str_replace(string = .x, pattern = ",", 
+                replacement = ".")
+  )))
+
+
+long_ideb_iniciais_escola <- anos_iniciais_escola %>% 
+  select(sg_uf, co_municipio, no_municipio, no_escola, id_escola, rede,
+         vl_observado_2005:vl_observado_2023,
+         starts_with(c("vl_nota_matematica", "vl_nota_portugues"))) %>% 
+  pivot_longer(cols = starts_with(c("vl_nota_matematica", "vl_nota_portugues",
+                                    "vl_observado")),
+               names_to = "x", values_to = "nota") %>% 
+  mutate(ano = parse_number(x),
+         x = str_extract_all(string = x, 
+                             pattern = "matematica|portugues|observado"),
+         avaliacao = "iniciais") %>% 
+  pivot_wider(names_from = x, values_from = nota) %>% 
+  rename(ideb = observado)
+
+# JUNTANDO BASES
+df_ideb_escola <- rbind(long_ideb_finais_escola, long_ideb_iniciais_escola)
+
+# PLOTS
+anos_finais_escola %>% filter(co_municipio == 2312908) %>% 
+  ggplot(aes(x = vl_observado_2019, y = vl_observado_2023)) +
+  geom_point()
+
+anos_finais_escola %>% filter(co_municipio == 2312908) %>% 
+  ggplot(aes(x = vl_observado_2019)) +
+  geom_histogram(bins = 5)
+
+long_ideb_finais_escola %>% filter(co_municipio == 2312908) %>% 
+  mutate(ano = as.factor(ano)) %>% 
+  ggplot(aes(x = ano, y = ideb)) +
+  geom_boxplot() +
+  coord_flip()
+
+long_ideb_iniciais_escola %>% filter(co_municipio == 2312908) %>% 
+  mutate(ano = as.factor(ano)) %>% 
+  ggplot(aes(x = ano, y = matematica)) +
+  geom_boxplot() +
+  coord_flip()
+
+
+## 2.2 DISTORCAO IDADE-SERIE -------------------------------------------------
+tdi_escola_2019 <- read_csv2("raw_data/tdi_escolas_2019.csv", na = "--") %>% 
+  clean_names() %>% 
+  mutate(across(fun_cat_0:med_cat_0, ~str_replace(string = .x, pattern = ",", 
+                                                  replacement = ".")),
+         across(fun_cat_0:med_cat_0, ~ as.numeric(.x)))
+
+tdi_escola_2023 <- read_csv2("raw_data/tdi_escolas_2023.csv", na = "--") %>% 
+  clean_names() %>% 
+  mutate(across(fun_cat_0:med_cat_0, ~str_replace(string = .x, pattern = ",", 
+                                                  replacement = ".")),
+         across(fun_cat_0:med_cat_0, ~ as.numeric(.x)))
+
+tdi_escola <- rbind(tdi_escola_2019, tdi_escola_2023) %>% 
+  clean_names() %>% 
+  select(c(nu_ano_censo:fun_af_cat_0, -fun_cat_0)) %>% 
+  pivot_wider(names_from = nu_ano_censo,
+              values_from = starts_with("fun_a"))
+
+tdi_escola %>% filter(co_municipio == 2312908) %>% ggplot() +
+  geom_point(aes(x = fun_af_cat_0_2019, y = fun_af_cat_0_2023))
+
+tdi_escola %>% filter(co_municipio == 2312908) %>% ggplot() +
+  geom_point(aes(x = fun_ai_cat_0_2019, y = fun_ai_cat_0_2023))
